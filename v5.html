@@ -1,219 +1,229 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <script>
-// Redirige aleatoriamente a otro vX.html al recargar la página (solo una vez por carga)
-if (!sessionStorage.getItem('redirected')) {
-  sessionStorage.setItem('redirected', 'true');
+  <script>
+  // Redirige aleatoriamente a otro vX.html al recargar la página (solo una vez por carga)
+  if (!sessionStorage.getItem('redirected')) {
+    sessionStorage.setItem('redirected', 'true');
 
-  const variants = ['v1.html', 'v2.html', 'v3.html', 'v4.html', 'v5.html'];
-  const pick = variants[Math.floor(Math.random() * variants.length)];
+    const variants = ['v1.html', 'v2.html', 'v3.html', 'v4.html', 'v5.html'];
+    const pick = variants[Math.floor(Math.random() * variants.length)];
 
-  if (!location.pathname.endsWith(pick)) {
-    location.href = pick;
+    if (!location.pathname.endsWith(pick)) {
+      location.href = pick;
+    }
+  } else {
+    sessionStorage.removeItem('redirected'); // limpia para siguiente recarga
   }
-} else {
-  sessionStorage.removeItem('redirected'); // limpia para siguiente recarga
-}
-</script>
-<meta charset="UTF-8">
-<title>Almacabra</title>
-<style>
-html,body{margin:0;height:100%;overflow:hidden;background:#000}
-#cssContainer{position:fixed;inset:0;z-index:0;pointer-events:none}
-#webglCanvas{position:fixed;inset:0;z-index:10}
-#muteBtn{
-  position:fixed;top:12px;left:12px;z-index:20;width:36px;height:36px;
-  font-size:24px;line-height:34px;border:none;border-radius:50%;
-  cursor:pointer;background:#222;color:#fff;opacity:.85}
-#muteBtn:hover{opacity:1}
-</style>
+  </script>
 
-<script type="importmap">
-{"imports":{
-  "three":"https://cdn.jsdelivr.net/npm/three@0.162/build/three.module.js",
-  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.162/examples/jsm/"}}
-</script>
+  <meta charset="UTF-8">
+  <title>Almacabra</title>
+
+  <style>
+    html,body { margin:0; height:100%; overflow:hidden; background:#000; }
+    #cssContainer{ position:fixed; inset:0; z-index:0; pointer-events:none; }
+    #webglCanvas{ position:fixed; inset:0; z-index:10; }
+    #muteBtn{
+      position:fixed; top:12px; left:12px; z-index:20;
+      width:36px; height:36px; font-size:24px; line-height:34px;
+      border:none; border-radius:50%; cursor:pointer;
+      background:#222; color:#fff; opacity:.85;
+    }
+    #muteBtn:hover{ opacity:1; }
+  </style>
+
+  <script type="importmap">
+  {"imports":{
+    "three":"https://cdn.jsdelivr.net/npm/three@0.162/build/three.module.js",
+    "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.162/examples/jsm/"}}
+  </script>
 </head>
 <body>
-<button id="muteBtn">🔊</button>
-<div id="cssContainer"></div>
+  <button id="muteBtn">🔈</button>
+  <div id="cssContainer"></div>
 
-<script type="module">
-import * as THREE                   from 'three';
-import {OrbitControls}              from 'three/addons/controls/OrbitControls.js';
-import {GLTFLoader}                 from 'three/addons/loaders/GLTFLoader.js';
-import {CSS3DRenderer,CSS3DObject}  from 'three/addons/renderers/CSS3DRenderer.js';
-import {EffectComposer}             from 'three/addons/postprocessing/EffectComposer.js';
-import {RenderPass}                 from 'three/addons/postprocessing/RenderPass.js';
-import {FilmPass}                   from 'three/addons/postprocessing/FilmPass.js';
+  <script type="module">
+  import * as THREE                   from 'three';
+  import {OrbitControls}              from 'three/addons/controls/OrbitControls.js';
+  import {GLTFLoader}                 from 'three/addons/loaders/GLTFLoader.js';
+  import {CSS3DRenderer,CSS3DObject}  from 'three/addons/renderers/CSS3DRenderer.js';
+  import {EffectComposer}             from 'three/addons/postprocessing/EffectComposer.js';
+  import {RenderPass}                 from 'three/addons/postprocessing/RenderPass.js';
+  import {FilmPass}                   from 'three/addons/postprocessing/FilmPass.js';
 
-/* ---- constantes ---- */
-const ROOM = 30, MELT = 0.00025;
-const RATE_MIN = 0.4, RATE_MAX = 2.0, ANG_FULL = 1.0;
-const VID_ID  = 'UVLk6lL_t5w';        // ID del vídeo solicitado
+  /* ---- constantes ---- */
+  const ROOM = 30, MELT = 0.00025;
+  const RATE_MIN = 0.4, RATE_MAX = 2.0, ANG_FULL = 1.0;
+  const VID_ID  = 'UVLk6lL_t5w';        // ID del vídeo solicitado
 
-/* ---- escena y renderer ---- */
-let scene,cssScene,camera,renderer,cssRenderer,composer,controls;
-const models=[]; const clock=new THREE.Clock();
+  /* ---- escena y renderer ---- */
+  let scene,cssScene,camera,renderer,cssRenderer,composer,controls;
+  const models=[]; const clock=new THREE.Clock();
 
-/* ---- audio DJ‑pitch (idéntico a versiones previas) ---- */
-let ctx=null,gain=null,src=null,vin=false,dir='right',tok=0,muted=false;
-let lastAz=0,lastT=0;
-const R=[...Array(8)].map((_,i)=>`clip${i+1}.mp3`);
-const L=[...Array(8)].map((_,i)=>`clip${i+9}.mp3`);
-async function ensureCtx(){ if(!ctx){ctx=new (window.AudioContext||window.webkitAudioContext)();gain=ctx.createGain();gain.connect(ctx.destination);} if(ctx.state==='suspended')await ctx.resume(); gain.gain.value=muted?0:1; return ctx;}
-function playBuf(b){src&&src.stop();src=ctx.createBufferSource();src.buffer=b;src.connect(gain);src.start();}
-const rev=b=>{const r=ctx.createBuffer(b.numberOfChannels,b.length,b.sampleRate);for(let c=0;c<b.numberOfChannels;c++){const d=r.getChannelData(c),s=b.getChannelData(c);for(let i=0;i<b.length;i++)d[i]=s[b.length-1-i];}return r;};
-async function startVin(d){vin=true;dir=d;const id=++tok;const ac=await ensureCtx();const file=(d==='right'?R:L)[Math.random()*8|0];const buf=await ac.decodeAudioData(await (await fetch(file)).arrayBuffer());if(id!==tok||!vin)return;playBuf(dir==='right'?buf:rev(buf));lastAz=controls.getAzimuthalAngle();lastT=performance.now()/1000;}
-function stopVin(){vin=false;tok++;src&&src.stop();}
+  /* ---- audio DJ‑pitch (idéntico a versiones previas) ---- */
+  let ctx=null,gain=null,src=null,vin=false,dir='right',tok=0,muted=true;
+  let lastAz=0,lastT=0;
+  const R=[...Array(8)].map((_,i)=>`clip${i+1}.mp3`);
+  const L=[...Array(8)].map((_,i)=>`clip${i+9}.mp3`);
+  async function ensureCtx(){ if(!ctx){ctx=new (window.AudioContext||window.webkitAudioContext)();gain=ctx.createGain();gain.connect(ctx.destination);} if(ctx.state==='suspended')await ctx.resume(); gain.gain.value=muted?0:1; return ctx;}
+  function playBuf(b){src&&src.stop();src=ctx.createBufferSource();src.buffer=b;src.connect(gain);src.start();}
+  const rev=b=>{const r=ctx.createBuffer(b.numberOfChannels,b.length,b.sampleRate);for(let c=0;c<b.numberOfChannels;c++){const d=r.getChannelData(c),s=b.getChannelData(c);for(let i=0;i<b.length;i++)d[i]=s[b.length-1-i];}return r;};
+  async function startVin(d){vin=true;dir=d;const id=++tok;const ac=await ensureCtx();const file=(d==='right'?R:L)[Math.random()*8|0];const buf=await ac.decodeAudioData(await (await fetch(file)).arrayBuffer());if(id!==tok||!vin)return;playBuf(dir==='right'?buf:rev(buf));lastAz=controls.getAzimuthalAngle();lastT=performance.now()/1000;}
+  function stopVin(){vin=false;tok++;src&&src.stop();}
 
-/* ---- init ---- */
-init(); animate();
-function init(){
-  /* WebGL */
-  scene=new THREE.Scene();
-  camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,.1,100);
-  camera.position.set(0,1.6,4);
+  /* ---- init ---- */
+  init(); animate();
+  function init(){
+    /* WebGL */
+    scene=new THREE.Scene();
+    camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,.1,100);
+    camera.position.set(0,1.6,4);
 
-  renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,canvas:Object.assign(document.createElement('canvas'),{id:'webglCanvas'})});
-  renderer.setPixelRatio(devicePixelRatio);
-  renderer.outputEncoding=THREE.SRGBEncoding;
-  renderer.toneMapping=THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure=1.1;
-  renderer.setSize(innerWidth,innerHeight);
-  document.body.appendChild(renderer.domElement);
+    renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,canvas:Object.assign(document.createElement('canvas'),{id:'webglCanvas'})});
+    renderer.setPixelRatio(devicePixelRatio);
+    renderer.outputEncoding=THREE.SRGBEncoding;
+    renderer.toneMapping=THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure=1.1;
+    renderer.setSize(innerWidth,innerHeight);
+    document.body.appendChild(renderer.domElement);
 
-  composer=new EffectComposer(renderer);
-  composer.addPass(new RenderPass(scene,camera));
-  composer.addPass(new FilmPass(0.55,0.03,648,false));
+    composer=new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene,camera));
+    composer.addPass(new FilmPass(0.55,0.03,648,false));
 
-  /* CSS3D */
-  cssScene=new THREE.Scene();
-  cssRenderer=new CSS3DRenderer();
-  cssRenderer.setSize(innerWidth,innerHeight);
-  document.getElementById('cssContainer').appendChild(cssRenderer.domElement);
+    /* CSS3D */
+    cssScene=new THREE.Scene();
+    cssRenderer=new CSS3DRenderer();
+    cssRenderer.setSize(innerWidth,innerHeight);
+    document.getElementById('cssContainer').appendChild(cssRenderer.domElement);
 
-  controls=new OrbitControls(camera,renderer.domElement);
-  controls.enableDamping=true;
+    controls=new OrbitControls(camera,renderer.domElement);
+    controls.enableDamping=true;
 
-  /* Habitación sin pared trasera */
-  addRoomNoBack();
+    /* Habitación sin pared trasera */
+    addRoomNoBack();
 
-  /* Luz blanca */
-  const dirLight=new THREE.DirectionalLight(0xffffff,5);
-  const amb=new THREE.AmbientLight(0xffffff,0.6);
-  scene.add(dirLight,dirLight.target,amb);
-  renderer.setAnimationLoop(()=>{dirLight.position.copy(camera.position);dirLight.target.position.copy(controls.target);});
+    /* Luz blanca */
+    const dirLight=new THREE.DirectionalLight(0xffffff,5);
+    const amb=new THREE.AmbientLight(0xffffff,0.6);
+    scene.add(dirLight,dirLight.target,amb);
+    renderer.setAnimationLoop(()=>{dirLight.position.copy(camera.position);dirLight.target.position.copy(controls.target);});
 
-  /* Video‑muro */
-  addVideoWall();
+    /* Video‑muro */
+    addVideoWall();
 
-  /* Modelos */
-  loadModels();
+    /* Modelos */
+    loadModels();
 
-  /* Mute botón */
-  muteBtn.onclick=()=>{muted=!muted;gain&&(gain.gain.value=muted?0:1);muteBtn.textContent=muted?'🔈':'🔊';};
+    /* Mute botón */
+    muteBtn.textContent='🔈';
+    muteBtn.onclick=()=>{muted=!muted;gain&&(gain.gain.value=muted?0:1);muteBtn.textContent=muted?'🔈':'🔊';};
 
-  /* Pitch drag */
-  let drag=false;
-  renderer.domElement.addEventListener('pointerdown',e=>{if(e.button!==0)return;drag=true;lastAz=controls.getAzimuthalAngle();lastT=performance.now()/1000;});
-  renderer.domElement.addEventListener('pointermove',e=>{if(!drag)return;if(!vin&&Math.abs(e.movementX)>4)startVin(e.movementX>0?'right':'left');});
-  window.addEventListener('pointerup',()=>{drag=false;stopVin();},true);
+    /* Pitch drag */
+    let drag=false;
+    renderer.domElement.addEventListener('pointerdown',e=>{if(e.button!==0)return;drag=true;lastAz=controls.getAzimuthalAngle();lastT=performance.now()/1000;});
+    renderer.domElement.addEventListener('pointermove',e=>{if(!drag)return;if(!vin&&Math.abs(e.movementX)>4)startVin(e.movementX>0?'right':'left');});
+    window.addEventListener('pointerup',()=>{drag=false;stopVin();},true);
 
-  /* Resize */
-  window.onresize=()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
-    renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);
-    cssRenderer.setSize(innerWidth,innerHeight);}
-}
+    /* Resize */
+    window.onresize=()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);
+      cssRenderer.setSize(innerWidth,innerHeight);}
+  }
 
-/* ---- habitación 5 caras ---- */
-function addRoomNoBack(){
-  const mat=new THREE.MeshStandardMaterial({color:0x222222,side:THREE.DoubleSide,roughness:1});
-  const w=ROOM/2;
-  const planes=[
-    [ new THREE.Vector3( 0, 0,  w), 0, Math.PI       ],
-    [ new THREE.Vector3( w, 0,  0), 0,-Math.PI/2     ],
-    [ new THREE.Vector3(-w, 0,  0), 0, Math.PI/2     ],
-    [ new THREE.Vector3( 0,  w,  0), Math.PI/2, 0    ],
-    [ new THREE.Vector3( 0,-w,  0),-Math.PI/2, 0     ]
-  ];
-  planes.forEach(([p,rx,ry])=>{
-    const m=new THREE.Mesh(new THREE.PlaneGeometry(ROOM,ROOM),mat);
-    m.position.copy(p);m.rotation.set(rx,ry,0);scene.add(m);
-  });
-}
+  /* ---- habitación 5 caras ---- */
+  function addRoomNoBack(){
+    const mat=new THREE.MeshStandardMaterial({color:0x222222,side:THREE.DoubleSide,roughness:1});
+    const w=ROOM/2;
+    const planes=[
+      [ new THREE.Vector3( 0, 0,  w), 0, Math.PI       ],
+      [ new THREE.Vector3( w, 0,  0), 0,-Math.PI/2     ],
+      [ new THREE.Vector3(-w, 0,  0), 0, Math.PI/2     ],
+      [ new THREE.Vector3( 0,  w,  0), Math.PI/2, 0    ],
+      [ new THREE.Vector3( 0,-w,  0),-Math.PI/2, 0     ]
+    ];
+    planes.forEach(([p,rx,ry])=>{
+      const m=new THREE.Mesh(new THREE.PlaneGeometry(ROOM,ROOM),mat);
+      m.position.copy(p);m.rotation.set(rx,ry,0);scene.add(m);
+    });
+  }
 
-/* ---- video‑muro ---- */
-function addVideoWall(){
-  const pxW=1920,pxH=1080,wallW=ROOM*0.99,scale=wallW/pxW;
-  const iframe=document.createElement('iframe');
-  iframe.src=`https://www.youtube-nocookie.com/embed/${VID_ID}`
-            +`?autoplay=1&loop=1&playlist=${VID_ID}`
-            +'&controls=0&rel=0&modestbranding=1&playsinline=1';
-  iframe.allow='autoplay; encrypted-media';
-  iframe.style.width=pxW+'px';iframe.style.height=pxH+'px';iframe.style.border='0';
-  const obj=new CSS3DObject(iframe);
-  obj.scale.setScalar(scale);
-  obj.position.set(0,0,-ROOM/2+0.01);
-  cssScene.add(obj);
-}
+  /* ---- video‑muro ---- */
+  function addVideoWall(){
+    const pxW=1920,pxH=1080,wallW=ROOM*0.99,scale=wallW/pxW;
+    const iframe=document.createElement('iframe');
+    iframe.src=`https://www.youtube-nocookie.com/embed/${VID_ID}`
+              +`?autoplay=1&mute=1&loop=1&playlist=${VID_ID}`   // <‑‑ mute=1
+              +'&controls=0&rel=0&modestbranding=1&playsinline=1';
+    iframe.allow='autoplay; encrypted-media; fullscreen';
+    iframe.style.width=pxW+'px';
+    iframe.style.height=pxH+'px';
+    iframe.style.border='0';
+    const obj=new CSS3DObject(iframe);
+    obj.scale.setScalar(scale);
+    obj.position.set(0,0,-ROOM/2+0.01);
+    cssScene.add(obj);
+  }
 
-/* ---- modelos rojos ---- */
-function loadModels(){
-  const loader=new GLTFLoader();
-  loader.load('modelo_superior.glb',g=>{toRed(g.scene);models.push(g.scene);scene.add(g.scene);layout();});
-  loader.load('modelo_inferior.glb',g=>{toRed(g.scene);models.push(g.scene);scene.add(g.scene);layout();});
-}
-function toRed(root){
-  const env=new THREE.PMREMGenerator(renderer).fromScene(scene,0.04).texture;
-  root.traverse(o=>{if(o.isMesh){
-    o.material=new THREE.MeshStandardMaterial({
-      color:0xff0000,metalness:0.25,roughness:0.18,
-      envMap:env,envMapIntensity:1.4});
-  }});
-}
-function layout(){
-  if(models.length<2)return;
-  models.forEach(m=>{const b=new THREE.Box3().setFromObject(m);m.position.sub(b.getCenter(new THREE.Vector3()));});
-  const h=new THREE.Box3().setFromObject(models[0]).getSize(new THREE.Vector3()).y;
-  models[1].position.y=-h*1.2;
-}
+  /* ---- modelos rojos ---- */
+  function loadModels(){
+    const loader=new GLTFLoader();
+    loader.load('modelo_superior.glb',g=>{toRed(g.scene);models.push(g.scene);scene.add(g.scene);layout();});
+    loader.load('modelo_inferior.glb',g=>{toRed(g.scene);models.push(g.scene);scene.add(g.scene);layout();});
+  }
+  function toRed(root){
+    const env=new THREE.PMREMGenerator(renderer).fromScene(scene,0.04).texture;
+    root.traverse(o=>{if(o.isMesh){
+      o.material=new THREE.MeshStandardMaterial({
+        color:0xff0000,metalness:0.25,roughness:0.18,
+        envMap:env,envMapIntensity:1.4});
+    }});
+  }
+  function layout(){
+    if(models.length<2)return;
+    models.forEach(m=>{const b=new THREE.Box3().setFromObject(m);m.position.sub(b.getCenter(new THREE.Vector3()));});
+    const h=new THREE.Box3().setFromObject(models[0]).getSize(new THREE.Vector3()).y;
+    models[1].position.y=-h*1.2;
+  }
 
-/* ---- melt ---- */
-function melt(){
-  const t=clock.getElapsedTime()*MELT;
-  models.forEach(r=>r.traverse(o=>{
-    if(!o.isMesh)return;
-    const g=o.geometry.index?o.geometry.toNonIndexed():o.geometry;
-    if(!g.userData.orig){g.attributes.position.setUsage(THREE.DynamicDrawUsage);g.userData.orig=Float32Array.from(g.attributes.position.array);o.geometry=g;}
-    const p=g.attributes.position,a=g.userData.orig;
-    for(let i=0;i<p.count;i++){
-      const ox=a[3*i],oy=a[3*i+1],oz=a[3*i+2];
-      p.setXYZ(i,ox,oy-(oy+1)*t,oz);
-    }
-    p.needsUpdate=true;
-  }));
-}
+  /* ---- melt ---- */
+  function melt(){
+    const t=clock.getElapsedTime()*MELT;
+    models.forEach(r=>r.traverse(o=>{
+      if(!o.isMesh)return;
+      const g=o.geometry.index?o.geometry.toNonIndexed():o.geometry;
+      if(!g.userData.orig){g.attributes.position.setUsage(THREE.DynamicDrawUsage);g.userData.orig=Float32Array.from(g.attributes.position.array);o.geometry=g;}
+      const p=g.attributes.position,a=g.userData.orig;
+      for(let i=0;i<p.count;i++){
+        const ox=a[3*i],oy=a[3*i+1],oz=a[3*i+2];
+        p.setXYZ(i,ox,oy-(oy+1)*t,oz);
+      }
+      p.needsUpdate=true;
+    }));
+  }
 
-/* ---- pitch ---- */
-function pitch(){
-  if(!vin||!src)return;
-  const now=performance.now()/1000,az=controls.getAzimuthalAngle();
-  let d=az-lastAz;if(d>Math.PI)d-=2*Math.PI;if(d<-Math.PI)d+=2*Math.PI;
-  const dt=now-lastT;if(dt<0.016)return;
-  const vel=d/dt; lastAz=az; lastT=now;
-  if( vel>0 && dir==='left'){dir='right';startVin('right');return;}
-  if( vel<0 && dir==='right'){dir='left';startVin('left'); return;}
-  src.playbackRate.setValueAtTime(THREE.MathUtils.lerp(RATE_MIN,RATE_MAX,THREE.MathUtils.clamp(Math.abs(vel)/ANG_FULL,0,1)),ctx.currentTime);
-}
+  /* ---- pitch ---- */
+  function pitch(){
+    if(!vin||!src)return;
+    const now=performance.now()/1000,az=controls.getAzimuthalAngle();
+    let d=az-lastAz;if(d>Math.PI)d-=2*Math.PI;if(d<-Math.PI)d+=2*Math.PI;
+    const dt=now-lastT;if(dt<0.016)return;
+    const vel=d/dt; lastAz=az; lastT=now;
+    if( vel>0 && dir==='left'){dir='right';startVin('right');return;}
+    if( vel<0 && dir==='right'){dir='left';startVin('left'); return;}
+    src.playbackRate.setValueAtTime(
+      THREE.MathUtils.lerp(RATE_MIN,RATE_MAX,THREE.MathUtils.clamp(Math.abs(vel)/ANG_FULL,0,1)),
+      ctx.currentTime
+    );
+  }
 
-/* ---- loop ---- */
-function animate(){
-  requestAnimationFrame(animate);
-  controls.update(); melt(); pitch();
-  composer.render(); cssRenderer.render(cssScene,camera);
-}
-</script>
+  /* ---- loop ---- */
+  function animate(){
+    requestAnimationFrame(animate);
+    controls.update(); melt(); pitch();
+    composer.render(); cssRenderer.render(cssScene,camera);
+  }
+  </script>
 </body>
 </html>
