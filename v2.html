@@ -1,28 +1,11 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-       <script>
-// Redirige aleatoriamente a otro vX.html al recargar la página (solo una vez por carga)
-if (!sessionStorage.getItem('redirected')) {
-  sessionStorage.setItem('redirected', 'true');
-
-  const variants = ['v1.html', 'v2.html', 'v3.html', 'v4.html', 'v5.html'];
-  const pick = variants[Math.floor(Math.random() * variants.length)];
-
-  if (!location.pathname.endsWith(pick)) {
-    location.href = pick;
-  }
-} else {
-  sessionStorage.removeItem('redirected'); // limpia para siguiente recarga
-}
-</script>
-
 <meta charset="UTF-8">
-<title>Almacabra</title>
+<title>Almacabra · Modelos + Graffiti + DJ‑Pitch (fix lastAz)</title>
 <style>
 html,body{margin:0;height:100%;overflow:hidden;background:#000}
-#fg{position:fixed;inset:0;z-index:1;display:block}
-#bg{position:fixed;inset:0;z-index:0;filter:blur(45px);transform:scale(1.4)}
+#fg{position:fixed;inset:0;display:block}
 .panel{position:fixed;top:10px;left:10px;z-index:25;display:flex;gap:8px;
        background:#0008;padding:6px;border-radius:6px}
 .panel input[type="color"]{width:34px;height:34px;border:none;border-radius:4px}
@@ -39,179 +22,202 @@ html,body{margin:0;height:100%;overflow:hidden;background:#000}
 </script>
 </head>
 <body>
-<canvas id="bg"></canvas>
 <canvas id="fg"></canvas>
 
 <div class="panel">
   <button id="mute" class="btn">🔊</button>
-  <input  id="cModel" type="color">
+  <input  id="cModel" type="color" value="#aaaaaa">
   <input  id="cPaint" type="color" value="#ff00ff">
   <input  id="cSize"  type="range" min="1" max="40" value="8">
 </div>
 
 <script type="module">
-import * as THREE from 'three';
-import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
-import {GLTFLoader}   from 'three/addons/loaders/GLTFLoader.js';
-import {EffectComposer}from 'three/addons/postprocessing/EffectComposer.js';
-import {RenderPass}   from 'three/addons/postprocessing/RenderPass.js';
-import {GlitchPass}   from 'three/addons/postprocessing/GlitchPass.js';
+import * as THREE              from 'three';
+import {OrbitControls}         from 'three/addons/controls/OrbitControls.js';
+import {GLTFLoader}            from 'three/addons/loaders/GLTFLoader.js';
+import {EffectComposer}        from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass}            from 'three/addons/postprocessing/RenderPass.js';
+import {GlitchPass}            from 'three/addons/postprocessing/GlitchPass.js';
 
-/* --- Constantes --- */
-const TEX = 1024, AUDIO_MIN=0.25, AUDIO_MAX=2.5, ANG_FULL=1.2;
+/* ---------- constantes ---------- */
+const TEX=1024, AUDIO_MIN=0.25, AUDIO_MAX=2.5, ANG_FULL=1.2;
 
-/* --- Renderers --- */
-const fgR=new THREE.WebGLRenderer({canvas:fg,antialias:true});
-fgR.setPixelRatio(devicePixelRatio);
-fgR.setSize(innerWidth,innerHeight);
-fgR.outputEncoding=THREE.sRGBEncoding;
-fgR.toneMapping=THREE.ACESFilmicToneMapping;
-fgR.toneMappingExposure=1.4;
+/* ---------- renderer ---------- */
+const renderer=new THREE.WebGLRenderer({canvas:fg,antialias:true});
+renderer.setPixelRatio(Math.min(2,devicePixelRatio));
+renderer.setSize(innerWidth,innerHeight);
+renderer.outputEncoding=THREE.SRGBEncoding;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.3;
 
-const bgR=new THREE.WebGLRenderer({canvas:bg,antialias:true});
-bgR.setPixelRatio(devicePixelRatio);
-bgR.setSize(innerWidth,innerHeight);
-bgR.outputEncoding=THREE.sRGBEncoding;
-bgR.toneMapping=THREE.ACESFilmicToneMapping;
-bgR.toneMappingExposure=1.6;
-bgR.setClearColor(0x111111,1);           /* <- gris profundo */
-
-/* --- Escena, cámara y controles --- */
+/* ---------- escena ---------- */
 const scene=new THREE.Scene();
 const camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,.1,100);
 camera.position.set(0,1.6,4);
 const controls=new OrbitControls(camera,fg);
 controls.enableDamping=true;controls.dampingFactor=.08;
 
-/* --- Luces --- */
+/* ---------- luces ---------- */
 scene.add(new THREE.AmbientLight(0xffffff,0.55));
 scene.add(new THREE.HemisphereLight(0xffffff,0x444466,0.6));
 const camLight=new THREE.DirectionalLight(0xffffff,4);
-scene.add(camLight);scene.add(camLight.target);
+scene.add(camLight,camLight.target);
 
-/* --- Graffiti texture --- */
+/* ---------- graffiti texture ---------- */
 const gCan=document.createElement('canvas');gCan.width=gCan.height=TEX;
-const gCtx=gCan.getContext('2d');gCtx.lineCap='round';gCtx.lineJoin='round';
-const gTex=new THREE.CanvasTexture(gCan);gTex.encoding=THREE.sRGBEncoding;
+const gCtx=gCan.getContext('2d',{alpha:true});
+gCtx.lineCap=gCtx.lineJoin='round';
+const gTex=new THREE.CanvasTexture(gCan);gTex.encoding=THREE.SRGBEncoding;
 
-/* --- Reflejos --- */
+/* ---------- reflections ---------- */
 const cubeRT=new THREE.WebGLCubeRenderTarget(256,{type:THREE.HalfFloatType,generateMipmaps:true,minFilter:THREE.LinearMipmapLinearFilter});
-const cubeCam=new THREE.CubeCamera(0.5,100,cubeRT); scene.add(cubeCam);
-const pmrem=new THREE.PMREMGenerator(fgR);
+const cubeCam=new THREE.CubeCamera(0.5,100,cubeRT);scene.add(cubeCam);
+const pmrem=new THREE.PMREMGenerator(renderer);
 
-/* --- Post FX --- */
-const composer=new EffectComposer(fgR);
+/* ---------- post FX ---------- */
+const composer=new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene,camera));
 composer.addPass(new GlitchPass());
 
-/* --- Modelos --- */
-const models=[]; let modelColor=new THREE.Color('#aaaaaa');
-function mat(root){
-  root.traverse(o=>{if(o.isMesh){
-    o.material=new THREE.MeshStandardMaterial({
-      color:modelColor.clone(),metalness:0.6,roughness:0.15,
-      envMap:cubeRT.texture,envMapIntensity:2,
-      emissive:0xffffff,emissiveMap:gTex,map:o.material.map||null});}});}
-const loader=new GLTFLoader();
-loader.load('modelo_superior.glb',g=>{mat(g.scene);models.push(g.scene);scene.add(g.scene);layout();});
-loader.load('modelo_inferior.glb',g=>{mat(g.scene);models.push(g.scene);scene.add(g.scene);layout();});
-function layout(){if(models.length<2)return;
-  models.forEach(m=>{const box=new THREE.Box3().setFromObject(m);m.position.sub(box.getCenter(new THREE.Vector3()));});
+/* ---------- modelos ---------- */
+const models=[];let modelColor=new THREE.Color('#aaaaaa');
+function prepare(root){
+  root.traverse(o=>{
+    if(o.isMesh){
+      o.material=new THREE.MeshStandardMaterial({
+        color:modelColor.clone(),metalness:0.6,roughness:0.15,
+        envMap:cubeRT.texture,envMapIntensity:2,
+        emissive:0xffffff,emissiveMap:gTex,map:o.material.map||null});
+  }});
+}
+const ldr=new GLTFLoader();
+ldr.load('modelo_superior.glb',g=>{prepare(g.scene);models.push(g.scene);scene.add(g.scene);layout();});
+ldr.load('modelo_inferior.glb',g=>{prepare(g.scene);models.push(g.scene);scene.add(g.scene);layout();});
+function layout(){
+  if(models.length<2)return;
+  models.forEach(m=>{
+    const b=new THREE.Box3().setFromObject(m);
+    m.position.sub(b.getCenter(new THREE.Vector3()));
+  });
   const h=new THREE.Box3().setFromObject(models[0]).getSize(new THREE.Vector3()).y;
-  models[1].position.y=-h*1.2;}
+  models[1].position.y=-h*1.2;
+}
 
-/* --- Audio DJ --- */
-let ctx=null,gain=null,src=null,curBuf=null,revBuf=null;
-let vinyl=false,dir='right',token=0,muted=false;
+/* ---------- audio DJ‑pitch ---------- */
+let actx=null,gain=null,src=null,curBuf=null,revBuf=null;
+let vinyl=false,dir='right',tok=0,muted=false;
+/*  🔴  Declaramos lastAz y lastT globales */
 let lastAz=0,lastT=performance.now()/1000;
-const R=[...Array(8)].map((_,i)=>`clip${i+1}.mp3`);
-const L=[...Array(8)].map((_,i)=>`clip${i+9}.mp3`);
-async function ensureCtx(){if(!ctx){ctx=new (window.AudioContext||window.webkitAudioContext)();gain=ctx.createGain();gain.connect(ctx.destination);}if(ctx.state==='suspended')await ctx.resume();gain.gain.value=muted?0:1;return ctx;}
-function play(b){if(src){src.stop();src.disconnect();}src=ctx.createBufferSource();src.buffer=b;src.loop=false;src.connect(gain);src.start();}
-const reverse=b=>{const r=ctx.createBuffer(b.numberOfChannels,b.length,b.sampleRate);for(let c=0;c<b.numberOfChannels;c++){const d=r.getChannelData(c),s=b.getChannelData(c);for(let i=0;i<b.length;i++)d[i]=s[b.length-1-i];}return r;};
-async function startVinyl(d){vinyl=true;dir=d;const id=++token;const ac=await ensureCtx();
-  const file=(d==='right'?R:L)[Math.random()*8|0];
-  const buf=await ac.decodeAudioData(await (await fetch(file)).arrayBuffer());
-  if(id!==token||!vinyl)return;curBuf=buf;revBuf=reverse(buf);play(dir==='right'?curBuf:revBuf);
-  lastAz=controls.getAzimuthalAngle();lastT=performance.now()/1000;}
-function stopVinyl(){vinyl=false;token++;if(src){src.stop();src.disconnect();src=null;}}
 
-/* --- Interaction --- */
+const listR=[...Array(8)].map((_,i)=>`clip${i+1}.mp3`);
+const listL=[...Array(8)].map((_,i)=>`clip${i+9}.mp3`);
+async function audioCtx(){
+  if(!actx){actx=new (window.AudioContext||window.webkitAudioContext)();gain=actx.createGain();gain.connect(actx.destination);}
+  if(actx.state==='suspended')await actx.resume();
+  gain.gain.value=muted?0:1;return actx;
+}
+function play(buf){
+  src&&src.stop();
+  src=actx.createBufferSource();src.buffer=buf;src.connect(gain);src.start();
+}
+const reverse=b=>{
+  const r=actx.createBuffer(b.numberOfChannels,b.length,b.sampleRate);
+  for(let c=0;c<b.numberOfChannels;c++){
+    const d=r.getChannelData(c),s=b.getChannelData(c);
+    for(let i=0;i<b.length;i++)d[i]=s[b.length-1-i];}
+  return r;
+};
+async function startVinyl(d){
+  vinyl=true;dir=d;const id=++tok;const ac=await audioCtx();
+  const file=(d==='right'?listR:listL)[Math.random()*8|0];
+  const buf=await ac.decodeAudioData(await (await fetch(file)).arrayBuffer());
+  if(id!==tok||!vinyl)return;
+  curBuf=buf;revBuf=reverse(buf);play(dir==='right'?curBuf:revBuf);
+  lastAz=controls.getAzimuthalAngle();lastT=performance.now()/1000;
+}
+function stopVinyl(){vinyl=false;tok++;src&&src.stop();}
+
+/* ---------- interacción ---------- */
 let rotating=true,drawing=false,lastUV=null;
 const ray=new THREE.Raycaster(),mouse=new THREE.Vector2();
-const uv2xy=(u,v)=>[u*TEX,(1-v)*TEX];
-function hitUV(e){mouse.set((e.clientX/innerWidth)*2-1,-(e.clientY/innerHeight)*2+1);
+function hitUV(e){
+  mouse.set((e.clientX/innerWidth)*2-1,-(e.clientY/innerHeight)*2+1);
   ray.setFromCamera(mouse,camera);
   const h=ray.intersectObjects(models,true)[0];
-  return h&&h.uv?h.uv.clone():null;}
-
+  return h&&h.uv?h.uv.clone():null;
+}
 fg.addEventListener('pointerdown',e=>{
-  ensureCtx();rotating=false;
-  const uv=hitUV(e);if(uv){drawing=true;lastUV=uv;}else stopVinyl();
-  e.target.setPointerCapture(e.pointerId);});
+  audioCtx();rotating=false;
+  const uv=hitUV(e);
+  if(uv){drawing=true;lastUV=uv;}
+  else  stopVinyl();
+  e.target.setPointerCapture(e.pointerId);
+});
 fg.addEventListener('pointermove',e=>{
   if(drawing){
     const uv=hitUV(e);if(!uv)return;
-    const [x1,y1]=uv2xy(lastUV.x,lastUV.y),[x2,y2]=uv2xy(uv.x,uv.y);
+    const x1=lastUV.x*TEX,y1=(1-lastUV.y)*TEX;
+    const x2=uv.x*TEX,y2=(1-uv.y)*TEX;
     gCtx.strokeStyle=brushColor;gCtx.lineWidth=brushSize;
     gCtx.beginPath();gCtx.moveTo(x1,y1);gCtx.lineTo(x2,y2);gCtx.stroke();
-    gTex.needsUpdate=true;lastUV=uv;return;}
-  if(!vinyl&&Math.abs(e.movementX)>4)startVinyl(e.movementX>0?'right':'left');});
-fg.addEventListener('pointerup',()=>{if(drawing){drawing=false;rotating=true;}stopVinyl();});
-fg.addEventListener('pointercancel',()=>{if(drawing){drawing=false;rotating=true;}stopVinyl();});
-window.addEventListener('pointerup',()=>{if(drawing){drawing=false;rotating=true;}stopVinyl();},true);
+    gTex.needsUpdate=true;lastUV=uv;return;
+  }
+  if(!vinyl&&Math.abs(e.movementX)>4)
+    startVinyl(e.movementX>0?'right':'left');
+});
+const endDraw=()=>{if(drawing){drawing=false;rotating=true;}stopVinyl();};
+fg.addEventListener('pointerup',endDraw);
+fg.addEventListener('pointercancel',endDraw);
+window.addEventListener('pointerup',endDraw,true);
 
-/* --- UI --- */
-mute.onclick=()=>{muted=!muted;if(gain)gain.gain.value=muted?0:1;mute.textContent=muted?'🔈':'🔊';};
-cModel.oninput=()=>{modelColor.set(cModel.value);models.forEach(r=>r.traverse(o=>o.isMesh&&(o.material.color.copy(modelColor))));};
-let brushColor=cPaint.value; let brushSize=parseInt(cSize.value,10);
+/* ---------- UI ---------- */
+mute.onclick=()=>{muted=!muted;gain&&(gain.gain.value=muted?0:1);mute.textContent=muted?'🔈':'🔊';};
+let brushColor=cPaint.value,brushSize=parseInt(cSize.value,10);
 cPaint.oninput=e=>brushColor=e.target.value;
 cSize .oninput=e=>brushSize=parseInt(e.target.value,10);
+cModel.oninput=()=>{modelColor.set(cModel.value);models.forEach(r=>r.traverse(o=>o.isMesh&&o.material.color.copy(modelColor)));};
 
-/* --- Reset --- */
-let tap=0;const reset=()=>{stopVinyl();drawing=false;rotating=true;gCtx.clearRect(0,0,TEX,TEX);gTex.needsUpdate=true;}
+/* ---------- reset doble toque ---------- */
+let tap=0;const reset=()=>{stopVinyl();drawing=false;rotating=true;gCtx.clearRect(0,0,TEX,TEX);gTex.needsUpdate=true;};
 window.addEventListener('pointerdown',e=>{const n=performance.now();if(n-tap<300)reset();tap=n;});
 window.addEventListener('dblclick',reset);
 
-/* --- Resize --- */
-window.onresize=()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
-  fgR.setSize(innerWidth,innerHeight);bgR.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);};
+/* ---------- resize ---------- */
+window.onresize=()=>{
+  camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);
+};
 
-/* --- Loop --- */
+/* ---------- loop ---------- */
 let frame=0;
 function animate(){
   requestAnimationFrame(animate);
   if(rotating)models.forEach(m=>m.rotation.y+=0.002);
   controls.update();
+  camLight.position.copy(camera.position);camLight.target.position.copy(controls.target);
 
-  /* luz frontal */
-  camLight.position.copy(camera.position);
-  camLight.target.position.copy(controls.target);
-
-  /* envMap cada 30f */
-  if(frame++%30===0){
+  if(++frame%30===0){
     models.forEach(m=>m.visible=false);
-    cubeCam.position.copy(camera.position);cubeCam.update(fgR,scene);
+    cubeCam.position.copy(camera.position);cubeCam.update(renderer,scene);
     const env=pmrem.fromCubemap(cubeRT.texture).texture;
     models.forEach(m=>m.visible=true);
     models.forEach(r=>r.traverse(o=>o.isMesh&&(o.material.envMap=env,o.material.needsUpdate=true)));
   }
 
-  /* pitch */
   if(vinyl&&src){
     const t=performance.now()/1000,az=controls.getAzimuthalAngle();
     let d=az-lastAz;if(d>Math.PI)d-=2*Math.PI;if(d<-Math.PI)d+=2*Math.PI;
-    const dt=t-lastT;if(dt>0.016){
+    const dt=t-lastT;
+    if(dt>0.016){
       const vel=d/dt;lastAz=az;lastT=t;
       if(vel>0&&dir==='left'){dir='right';play(curBuf);}
       else if(vel<0&&dir==='right'){dir='left';play(revBuf);}
       src.playbackRate.setValueAtTime(
         THREE.MathUtils.lerp(AUDIO_MIN,AUDIO_MAX,THREE.MathUtils.clamp(Math.abs(vel)/ANG_FULL,0,1)),
-        ctx.currentTime);}}
+        actx.currentTime);
+    }
+  }
 
-  /* Fondo (blur) */
-  bgR.render(scene,camera);
-  /* Frente */
   composer.render();
 }
 animate();
