@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Almacabra</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#000}
+  canvas{display:block}
+  #muteBtn{
+    position:fixed;z-index:20;top:12px;left:12px;
+    width:36px;height:36px;font-size:24px;line-height:34px;
+    text-align:center;border:none;border-radius:50%;
+    background:#222;color:#fff;cursor:pointer;opacity:.85}
+  #muteBtn:hover{opacity:1}
+</style>
+
+<script type="importmap">
+{
+  "imports": {
+    "three":               "https://cdn.jsdelivr.net/npm/three@0.162/build/three.module.js",
+    "three/addons/":       "https://cdn.jsdelivr.net/npm/three@0.162/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<button id="muteBtn" title="Silenciar / Activar">🔊</button>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls }      from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader }         from 'three/addons/loaders/GLTFLoader.js';
+import { EffectComposer }     from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }         from 'three/addons/postprocessing/RenderPass.js';
+import { GlitchPass }         from 'three/addons/postprocessing/GlitchPass.js';
+
+/* ── parámetros ── */
+const INFLUENCE_RADIUS=0.45, DRAG_SENS=0.025, RETURN_SPEED=0.08;
+const LOOP_CPS=0.02, AUDIO_MIN=0.4, AUDIO_MAX=2.0, ANG_FULL=1.0;
+
+/* ── escena & básicos ── */
+let scene,camera,renderer,controls,raycaster,composer,glitchPass;
+const clock=new THREE.Clock(); const mouse=new THREE.Vector2(); const models=[];
+let deform=null,prevX=0,prevY=0;
+const BLACK=new THREE.Color(0x000000), RED=new THREE.Color(0xff0000); let tSmooth=0;
+
+/* ── Web Audio ── */
+let ctx=null, masterGain=null, src=null;
+let curBuf=null, revBuf=null, vinActive=false, dir='right', loadToken=0, muted=false;
+const RCLIPS=[...Array(8)].map((_,i)=>`clip${i+1}.mp3`);   // ← raíz
+const LCLIPS=[...Array(8)].map((_,i)=>`clip${i+9}.mp3`);
+
+async function ensureCtx(){
+  if(!ctx){
+    ctx=new (window.AudioContext||window.webkitAudioContext)();
+    masterGain=ctx.createGain();
+    masterGain.gain.value=muted?0:1;
+    masterGain.connect(ctx.destination);
+  }
+  if(ctx.state==='suspended') await ctx.resume();
+  return ctx;
+}
+async function loadBuf(ac,url){
+  const arr=await (await fetch(url)).arrayBuffer();
+  return ac.decodeAudioData(arr);}
+function reverse(buf){
+  const r=ctx.createBuffer(buf.numberOfChannels,buf.length,buf.sampleRate);
+  for(let ch=0;ch<buf.numberOfChannels;ch++){
+    const s=buf.getChannelData(ch),d=r.getChannelData(ch);
+    for(let i=0;i<buf.length;i++) d[i]=s[buf.length-1-i];}
+  return r;}
+function play(buf){
+  if(src){src.stop();src.disconnect();}
+  src=ctx.createBufferSource();
+  src.buffer=buf; src.loop=false;
+  src.connect(masterGain); src.start();}
+function stopVinyl(){
+  vinActive=false; loadToken++;
+  if(src){src.stop();src.disconnect();src=null;}
+}
+async function startVinyl(direction){
+  stopVinyl(); dir=direction; vinActive=true;
+  const token=++loadToken;
+  const ac=await ensureCtx();
+  const file=(dir==='right'?RCLIPS:LCLIPS)[Math.random()*8|0];
+  const buf=await loadBuf(ac,file);
+  if(token!==loadToken||!vinActive) return;
+  curBuf=buf; revBuf=reverse(buf);
+  play(dir==='right'?curBuf:revBuf);
+}
+
+/* ── init ── */
+init(); animate();
+function init(){
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,.1,100);
+  camera.position.set(0,1.5,4);
+
+  renderer=new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(innerWidth,innerHeight); document.body.appendChild(renderer.domElement);
+
+  composer=new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene,camera));
+  glitchPass=new GlitchPass(); composer.addPass(glitchPass);
+
+  controls=new OrbitControls(camera,renderer.domElement);
+  controls.enableDamping=true; controls.dampingFactor=.08;
+
+  scene.add(new THREE.HemisphereLight(0xffffff,0x444444,1.3));
+  const dl=new THREE.DirectionalLight(0xffffff,1); dl.position.set(5,10,7); scene.add(dl);
+
+  raycaster=new THREE.Raycaster();
+
+  /* pointer */
+  renderer.domElement.addEventListener('pointerdown',down);
+  renderer.domElement.addEventListener('pointermove',move);
+  renderer.domElement.addEventListener('pointerup',up);
+  renderer.domElement.addEventListener('pointercancel',up);
+  window.addEventListener('pointerup',up,true);
+  window.addEventListener('pointercancel',up,true);
+
+  /* reset (dblclick / double‑tap) */
+  window.addEventListener('dblclick',resetAll);
+  let lastTap=0; window.addEventListener('pointerdown',e=>{
+    const now=performance.now(); if(now-lastTap<300) resetAll(); lastTap=now;});
+
+  /* mute icon */
+  const muteBtn=document.getElementById('muteBtn');
+  muteBtn.onclick=()=>{
+    muted=!muted;
+    if(masterGain) masterGain.gain.value=muted?0:1;
+    muteBtn.textContent=muted?'🔈':'🔊';
+  };
+
+  /* modelos */
+  const l=new GLTFLoader();
+  l.load('modelo_superior.glb',g=>{models.push(g.scene);scene.add(g.scene);layout();});
+  l.load('modelo_inferior.glb',g=>{models.push(g.scene);scene.add(g.scene);layout();});
+
+  window.onresize=()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+                       renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);}
+}
+function layout(){
+  if(models.length<2)return;
+  models.forEach(m=>{
+    const b=new THREE.Box3().setFromObject(m);
+    m.position.sub(b.getCenter(new THREE.Vector3()));});
+  const h=new THREE.Box3().setFromObject(models[0]).getSize(new THREE.Vector3()).y;
+  models[1].position.y=-h*1.2; frameAll();}
+function frameAll(){
+  const box=new THREE.Box3(); models.forEach(m=>box.expandByObject(m));
+  const size=box.getSize(new THREE.Vector3()).length();
+  const center=box.getCenter(new THREE.Vector3());
+  camera.position.copy(center).addScaledVector(new THREE.Vector3(0,.2,1).normalize(),size*1.2);
+  camera.near=size/100; camera.far=size*10; camera.updateProjectionMatrix();
+  controls.target.copy(center); controls.update();}
+
+/* ── pointer handlers ── */
+let lastAz=0,lastT=0;
+function toNDC(e){mouse.set((e.clientX/innerWidth)*2-1, -(e.clientY/innerHeight)*2+1);}
+function down(e){
+  if(e.button!==0) return;
+  ensureCtx();
+  toNDC(e); raycaster.setFromCamera(mouse,camera);
+  const hit=raycaster.intersectObjects(models,true)[0];
+  if(hit){
+    const m=hit.object,g=m.geometry.index?m.geometry.toNonIndexed():m.geometry;
+    g.attributes.position.setUsage(THREE.DynamicDrawUsage);
+    if(!g.userData.orig) g.userData.orig=g.attributes.position.array.slice();
+    const hL=m.worldToLocal(hit.point.clone()),p=g.attributes.position,aff=[];
+    for(let i=0;i<p.count;i++)
+      if(hL.distanceTo(new THREE.Vector3(p.getX(i),p.getY(i),p.getZ(i)))<INFLUENCE_RADIUS) aff.push(i);
+    deform={mesh:m,geom:g,hitLocal:hL,affected:aff,drag:true};
+    prevX=e.clientX;prevY=e.clientY;
+  }else{
+    vinActive=false; stopVinyl();
+    prevX=e.clientX; lastAz=controls.getAzimuthalAngle(); lastT=performance.now()/1000;
+  }
+  e.target.setPointerCapture(e.pointerId);
+}
+function move(e){
+  if(deform&&deform.drag){
+    const dx=e.clientX-prevX,dy=prevY-e.clientY;prevX=e.clientX;prevY=e.clientY;
+    const p=deform.geom.attributes.position,o=deform.geom.userData.orig;
+    deform.affected.forEach(i=>{
+      const ox=o[3*i],oy=o[3*i+1],oz=o[3*i+2];
+      const d=deform.hitLocal.distanceTo(new THREE.Vector3(ox,oy,oz)),f=(1-d/INFLUENCE_RADIUS)**2;
+      p.setXYZ(i,ox+dx*DRAG_SENS*f,oy+dy*DRAG_SENS*f,oz);});
+    p.needsUpdate=true;deform.mesh.geometry.computeVertexNormals();return;}
+  const delta=e.clientX-prevX;
+  if(!vinActive&&Math.abs(delta)>4) startVinyl(delta>0?'right':'left');
+}
+function up(){ if(deform){deform.drag=false;deform=null;} stopVinyl();}
+
+/* ── deform return ── */
+function back(){
+  if(!deform)return;
+  const p=deform.geom.attributes.position,o=deform.geom.userData.orig;let mv=false;
+  deform.affected.forEach(i=>{
+    const x=p.getX(i),y=p.getY(i),ox=o[3*i],oy=o[3*i+1];
+    const nx=THREE.MathUtils.lerp(x,ox,RETURN_SPEED),ny=THREE.MathUtils.lerp(y,oy,RETURN_SPEED);
+    p.setXYZ(i,nx,ny,o[3*i+2]); if(Math.abs(nx-ox)>1e-4||Math.abs(ny-oy)>1e-4) mv=true;});
+  if(mv){p.needsUpdate=true;deform.mesh.geometry.computeVertexNormals();} else deform=null;}
+
+/* ── color loop ── */
+function color(){
+  const t=(clock.getElapsedTime()*LOOP_CPS)%1, az=controls.getAzimuthalAngle()/(2*Math.PI);
+  tSmooth+=((t+az+1)%1 - tSmooth)*0.04;
+  scene.background=new THREE.Color().lerpColors(BLACK,RED,tSmooth);
+  models.forEach(m=>m.traverse(o=>{
+    if(o.isMesh&&o.material){
+      o.material.color.lerpColors(RED,BLACK,tSmooth);
+      o.material.needsUpdate=true;}}));}
+
+/* ── vinilo pitch ── */
+function vinyl(){
+  if(!vinActive||!src) return;
+  const now=performance.now()/1000,az=controls.getAzimuthalAngle(),dt=now-lastT;
+  if(dt<.005) return;
+  let d=az-lastAz; if(d>Math.PI)d-=2*Math.PI; if(d<-Math.PI)d+=2*Math.PI;
+  const vel=d/dt; lastAz=az; lastT=now;
+  if(vel>0&&dir==='left'){dir='right';play(curBuf);}
+  else if(vel<0&&dir==='right'){dir='left';play(revBuf);}
+  const rate=THREE.MathUtils.lerp(AUDIO_MIN,AUDIO_MAX,
+               THREE.MathUtils.clamp(Math.abs(vel)/ANG_FULL,0,1));
+  if(Number.isFinite(rate)) src.playbackRate.setValueAtTime(rate,ctx.currentTime);
+}
+
+/* ── reset ── */
+function resetAll(){
+  stopVinyl(); deform=null; tSmooth=0; layout();}
+
+/* ── loop ── */
+function animate(){
+  requestAnimationFrame(animate);
+  controls.update(); color(); back(); vinyl();
+  composer.render();}
+</script>
+</body>
+</html>
