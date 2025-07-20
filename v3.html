@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Almacabra · Cristal semitranslúcido + DJ Pitch</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#000}
+canvas{display:block}
+#muteBtn{
+  position:fixed;top:12px;left:12px;z-index:30;
+  width:36px;height:36px;font-size:24px;line-height:34px;text-align:center;
+  border:none;border-radius:50%;cursor:pointer;
+  background:#222;color:#fff;opacity:.85}
+#muteBtn:hover{opacity:1}
+</style>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.162/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.162/examples/jsm/"}}
+</script>
+</head>
+<body>
+<button id="muteBtn">🔊</button>
+
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls}   from 'three/addons/controls/OrbitControls.js';
+import {GLTFLoader}      from 'three/addons/loaders/GLTFLoader.js';
+import {EffectComposer}  from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass}      from 'three/addons/postprocessing/RenderPass.js';
+import {GlitchPass}      from 'three/addons/postprocessing/GlitchPass.js';
+
+/* ---------- constantes ---------- */
+const MELT_SPEED = 0.00025;
+const LOOP_CPS_BG = 0.05;
+const HUE_SPEED   = 0.07;
+const AUDIO_MIN   = 0.4, AUDIO_MAX = 2.0, ANG_FULL = 1.0;
+const ROOM_SIZE   = 30;
+const OPACITY     = 0.75;        // ← menos transparente
+
+/* ---------- colores ---------- */
+const RED   = new THREE.Color(0xff0000);
+const BLACK = new THREE.Color(0x000000);
+
+/* ---------- escena ---------- */
+let scene,camera,renderer,composer,controls,camLight,amb,room;
+const clock=new THREE.Clock();
+const models=[]; let roomHue=0;
+
+/* ---------- audio ---------- */
+let ctx=null,gain=null,src=null,vin=false,dir='right',token=0,muted=false;
+let lastAz=0,lastT=0;
+const R=[...Array(8)].map((_,i)=>`clip${i+1}.mp3`);
+const L=[...Array(8)].map((_,i)=>`clip${i+9}.mp3`);
+async function ensureCtx(){ if(!ctx){ctx=new (window.AudioContext||window.webkitAudioContext)();gain=ctx.createGain();gain.connect(ctx.destination);} if(ctx.state==='suspended')await ctx.resume(); gain.gain.value=muted?0:1; return ctx;}
+function play(b){src&&src.stop();src=ctx.createBufferSource();src.buffer=b;src.connect(gain);src.start();}
+function reverse(b){const r=ctx.createBuffer(b.numberOfChannels,b.length,b.sampleRate);for(let c=0;c<b.numberOfChannels;c++){const d=r.getChannelData(c),s=b.getChannelData(c);for(let i=0;i<b.length;i++)d[i]=s[b.length-1-i];}return r;}
+async function startVin(d){vin=true;dir=d;const id=++token;const ac=await ensureCtx();const file=(d==='right'?R:L)[Math.random()*8|0];const buf=await ac.decodeAudioData(await (await fetch(file)).arrayBuffer());if(id!==token||!vin)return;play(dir==='right'?buf:reverse(buf)); lastAz=controls.getAzimuthalAngle(); lastT=performance.now()/1000;}
+function stopVin(){vin=false;token++;src&&src.stop();}
+
+/* ---------- init ---------- */
+init();animate();
+function init(){
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,.1,100);
+  camera.position.set(0,1.6,4);
+
+  renderer=new THREE.WebGLRenderer({antialias:true});
+  renderer.setPixelRatio(devicePixelRatio);
+  renderer.outputEncoding=THREE.sRGBEncoding;
+  renderer.toneMapping=THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure=1.4;
+  renderer.setSize(innerWidth,innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  composer=new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene,camera));
+  composer.addPass(new GlitchPass());
+
+  controls=new OrbitControls(camera,renderer.domElement);
+  controls.enableDamping=true;
+
+  /* sala cúbica */
+  const roomGeo=new THREE.BoxGeometry(ROOM_SIZE,ROOM_SIZE,ROOM_SIZE);
+  room=new THREE.Mesh(roomGeo,new THREE.MeshStandardMaterial({side:THREE.BackSide,color:0x222222,roughness:1}));
+  scene.add(room);
+
+  /* luces cromáticas */
+  camLight=new THREE.DirectionalLight(0xffffff,4);
+  amb     = new THREE.AmbientLight(0xffffff,0.55);
+  scene.add(camLight,camLight.target,amb);
+  renderer.setAnimationLoop(()=>{camLight.position.copy(camera.position);
+                                 camLight.target.position.copy(controls.target);});
+
+  /* mute */
+  muteBtn.onclick=()=>{muted=!muted;gain&&(gain.gain.value=muted?0:1);muteBtn.textContent=muted?'🔈':'🔊';};
+
+  /* modelos */
+  const loader=new GLTFLoader();
+  loader.load('modelo_superior.glb',g=>{prep(g.scene);models.push(g.scene);scene.add(g.scene);fit();});
+  loader.load('modelo_inferior.glb',g=>{prep(g.scene);models.push(g.scene);scene.add(g.scene);fit();});
+
+  /* DJ pitch drag */
+  let dragging=false;
+  renderer.domElement.addEventListener('pointerdown',e=>{ if(e.button!==0)return; dragging=true; lastAz=controls.getAzimuthalAngle(); lastT=performance.now()/1000; });
+  renderer.domElement.addEventListener('pointermove',e=>{ if(!dragging)return; if(!vin&&Math.abs(e.movementX)>4)startVin(e.movementX>0?'right':'left'); });
+  window.addEventListener('pointerup',()=>{dragging=false;stopVin();},true);
+
+  window.onresize=()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);}
+}
+
+/* ---------- preparar vidrio menos transparente ---------- */
+function prep(root){
+  const env=new THREE.PMREMGenerator(renderer).fromScene(scene,0.04).texture;
+  root.traverse(o=>{
+    if(o.isMesh){
+      o.material=new THREE.MeshPhysicalMaterial({
+        color:0xffffff,transparent:true,opacity:OPACITY,   // ← 75 % de opacidad
+        transmission:1,thickness:0.25,ior:1.46,roughness:0.06,
+        envMap:env,envMapIntensity:1.8});
+    }
+  });
+}
+
+/* ---------- ajustar modelos ---------- */
+function fit(){
+  if(models.length<2)return;
+  models.forEach(m=>{const box=new THREE.Box3().setFromObject(m);m.position.sub(box.getCenter(new THREE.Vector3()));});
+  const h=new THREE.Box3().setFromObject(models[0]).getSize(new THREE.Vector3()).y;
+  models[1].position.y=-h*1.2;
+}
+
+/* ---------- melt ---------- */
+function melt(){
+  const t=clock.getElapsedTime()*MELT_SPEED;
+  models.forEach(root=>root.traverse(o=>{
+    if(!o.isMesh)return;
+    const g=o.geometry.index?o.geometry.toNonIndexed():o.geometry;
+    if(!g.userData.orig){
+      g.attributes.position.setUsage(THREE.DynamicDrawUsage);
+      g.userData.orig=Float32Array.from(g.attributes.position.array);
+      o.geometry=g;
+    }
+    const p=g.attributes.position,a=g.userData.orig;
+    for(let i=0;i<p.count;i++){
+      const ox=a[3*i],oy=a[3*i+1],oz=a[3*i+2];
+      p.setXYZ(i,ox,oy-(oy+1)*t,oz);
+    }
+    p.needsUpdate=true;
+  }));
+}
+
+/* ---------- colores dinámicos ---------- */
+function updateColors(){
+  /* luz */
+  const hue=(clock.elapsedTime*HUE_SPEED)%1;
+  camLight.color.setHSL(hue,1,0.55);
+  amb.color.setHSL(hue,0.45,0.4);
+
+  /* paredes */
+  roomHue=(roomHue+LOOP_CPS_BG*0.016)%1;
+  room.material.color.setHSL(roomHue,0.6,0.25);
+}
+
+/* ---------- DJ‑pitch ---------- */
+function pitch(){
+  if(!vin||!src)return;
+  const now=performance.now()/1000,az=controls.getAzimuthalAngle();
+  let d=az-lastAz;if(d>Math.PI)d-=2*Math.PI;if(d<-Math.PI)d+=2*Math.PI;
+  const dt=now-lastT;if(dt<0.016) return;
+  const vel=d/dt; lastAz=az; lastT=now;
+  if(vel>0&&dir==='left'){dir='right';startVin('right');return;}
+  if(vel<0&&dir==='right'){dir='left';startVin('left');return;}
+  const rate=THREE.MathUtils.lerp(AUDIO_MIN,AUDIO_MAX,THREE.MathUtils.clamp(Math.abs(vel)/ANG_FULL,0,1));
+  src.playbackRate.setValueAtTime(rate,ctx.currentTime);
+}
+
+/* ---------- loop ---------- */
+function animate(){
+  requestAnimationFrame(animate);
+  controls.update();
+  melt();
+  updateColors();
+  pitch();
+  composer.render();
+}
+</script>
+</body>
+</html>
