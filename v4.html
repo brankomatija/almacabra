@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Almacabra · Lluvia fina + Película vintage + DJ Pitch</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#000}
+canvas{display:block}
+#muteBtn{
+  position:fixed;top:12px;left:12px;z-index:30;
+  width:36px;height:36px;font-size:24px;line-height:34px;text-align:center;
+  border:none;border-radius:50%;cursor:pointer;
+  background:#222;color:#fff;opacity:.85}
+#muteBtn:hover{opacity:1}
+</style>
+
+<script type="importmap">
+{"imports":{
+  "three":"https://cdn.jsdelivr.net/npm/three@0.162/build/three.module.js",
+  "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.162/examples/jsm/"}}
+</script>
+</head>
+<body>
+<button id="muteBtn">🔊</button>
+
+<script type="module">
+import * as THREE         from 'three';
+import {OrbitControls}    from 'three/addons/controls/OrbitControls.js';
+import {GLTFLoader}       from 'three/addons/loaders/GLTFLoader.js';
+import {EffectComposer}   from 'three/addons/postprocessing/EffectComposer.js';
+import {RenderPass}       from 'three/addons/postprocessing/RenderPass.js';
+import {FilmPass}         from 'three/addons/postprocessing/FilmPass.js';
+
+/* ------------ constantes ------------- */
+const ROOM_SIZE    = 30;
+const HUE_SPEED    = 0.07;
+const LOOP_CPS_BG  = 0.05;
+const MELT_SPEED   = 0.00025;
+
+const RAIN_COUNT   = 18000;   // densidad
+const RAIN_SIZE    = 0.02;    // diámetro punto
+const RAIN_MIN_V   = 0.9;     // velocidad mínima
+const RAIN_MAX_V   = 1.8;     // velocidad máxima
+
+const AUDIO_MIN=0.4, AUDIO_MAX=2.0, ANG_FULL=1.0;
+
+/* ------------ escena ------------- */
+let scene,camera,renderer,composer,filmPass,controls;
+let room,camLight,amb,rainPts,rainVel;
+const models=[]; const clock=new THREE.Clock();
+let roomHue=0;
+
+/* ------------ audio (lluvia + vinilo) ------------- */
+let ctx=null,gain=null,src=null,vin=false,dir='right',token=0,muted=false;
+let rainLoop=null;
+let lastAz=0,lastT=0;
+const R=[...Array(8)].map((_,i)=>`clip${i+1}.mp3`);
+const L=[...Array(8)].map((_,i)=>`clip${i+9}.mp3`);
+async function ensureCtx(){
+  if(!ctx){
+    ctx=new (window.AudioContext||window.webkitAudioContext)();
+    gain=ctx.createGain();gain.connect(ctx.destination);
+    const arr=await (await fetch('rain.mp3')).arrayBuffer();
+    const buf=await ctx.decodeAudioData(arr);
+    rainLoop=ctx.createBufferSource(); rainLoop.buffer=buf; rainLoop.loop=true;
+    rainLoop.connect(gain); rainLoop.start();
+  }
+  if(ctx.state==='suspended')await ctx.resume();
+  gain.gain.value=muted?0:1; return ctx;
+}
+function play(buf){src&&src.stop();src=ctx.createBufferSource();src.buffer=buf;src.connect(gain);src.start();}
+const rev=b=>{const r=ctx.createBuffer(b.numberOfChannels,b.length,b.sampleRate);
+  for(let c=0;c<b.numberOfChannels;c++){const d=r.getChannelData(c),s=b.getChannelData(c);
+    for(let i=0;i<b.length;i++)d[i]=s[b.length-1-i];}return r;};
+async function startVin(d){vin=true;dir=d;const id=++token;const ac=await ensureCtx();
+  const file=(d==='right'?R:L)[Math.random()*8|0];
+  const buf=await ac.decodeAudioData(await (await fetch(file)).arrayBuffer());
+  if(id!==token||!vin)return; play(d==='right'?buf:rev(buf));
+  lastAz=controls.getAzimuthalAngle(); lastT=performance.now()/1000;}
+function stopVin(){vin=false;token++;src&&src.stop();}
+
+/* ------------ init ------------- */
+init(); animate();
+function init(){
+  /* básico */
+  scene=new THREE.Scene();
+  camera=new THREE.PerspectiveCamera(60,innerWidth/innerHeight,.1,100);
+  camera.position.set(0,1.6,4);
+
+  renderer=new THREE.WebGLRenderer({antialias:true});
+  renderer.setPixelRatio(devicePixelRatio);
+  renderer.outputEncoding=THREE.sRGBEncoding;
+  renderer.toneMapping=THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure=1.2;
+  renderer.setSize(innerWidth,innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  composer=new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene,camera));
+  filmPass=new FilmPass(0.55,0.03,648,false); // grano + scratches
+  composer.addPass(filmPass);
+
+  controls=new OrbitControls(camera,renderer.domElement);
+  controls.enableDamping=true;
+
+  room=new THREE.Mesh(new THREE.BoxGeometry(ROOM_SIZE,ROOM_SIZE,ROOM_SIZE),
+      new THREE.MeshStandardMaterial({side:THREE.BackSide,color:0x222222,roughness:1}));
+  scene.add(room);
+
+  camLight=new THREE.DirectionalLight(0xffffff,4);
+  amb     = new THREE.AmbientLight(0xffffff,0.65);
+  scene.add(camLight,camLight.target,amb);
+  renderer.setAnimationLoop(()=>{camLight.position.copy(camera.position);camLight.target.position.copy(controls.target);});
+
+  createRain();
+
+  const ldr=new GLTFLoader();
+  ldr.load('modelo_superior.glb',g=>{prep(g.scene);models.push(g.scene);scene.add(g.scene);fit();});
+  ldr.load('modelo_inferior.glb',g=>{prep(g.scene);models.push(g.scene);scene.add(g.scene);fit();});
+
+  /* mute */
+  muteBtn.onclick=()=>{muted=!muted;gain&&(gain.gain.value=muted?0:1);muteBtn.textContent=muted?'🔈':'🔊';};
+
+  /* drag‑pitch */
+  let drag=false;
+  renderer.domElement.addEventListener('pointerdown',e=>{if(e.button!==0)return;drag=true;lastAz=controls.getAzimuthalAngle();lastT=performance.now()/1000;});
+  renderer.domElement.addEventListener('pointermove',e=>{
+      if(!drag)return;
+      if(!vin&&Math.abs(e.movementX)>4)startVin(e.movementX>0?'right':'left');});
+  window.addEventListener('pointerup',()=>{drag=false;stopVin();},true);
+
+  window.onresize=()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight);composer.setSize(innerWidth,innerHeight);}
+}
+
+/* ------------ lluvia fina ------------- */
+function createRain(){
+  const geo=new THREE.BufferGeometry();
+  const pos=new Float32Array(RAIN_COUNT*3);
+  rainVel=new Float32Array(RAIN_COUNT);
+  for(let i=0;i<RAIN_COUNT;i++){
+    pos[3*i]=(Math.random()-0.5)*ROOM_SIZE*0.95;
+    pos[3*i+1]=Math.random()*ROOM_SIZE*0.5;
+    pos[3*i+2]=(Math.random()-0.5)*ROOM_SIZE*0.95;
+    rainVel[i]=THREE.MathUtils.lerp(RAIN_MIN_V,RAIN_MAX_V,Math.random());
+  }
+  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+
+  /* textura gota radial */
+  const dropCanvas=document.createElement('canvas'); dropCanvas.width=64; dropCanvas.height=64;
+  const ctx2=dropCanvas.getContext('2d');
+  const grd=ctx2.createRadialGradient(32,32,4,32,32,32);grd.addColorStop(0,'rgba(255,255,255,1)');
+  grd.addColorStop(1,'rgba(255,255,255,0)');
+  ctx2.fillStyle=grd; ctx2.beginPath(); ctx2.arc(32,32,32,0,Math.PI*2); ctx2.fill();
+  const texture=new THREE.CanvasTexture(dropCanvas);
+
+  const mat=new THREE.PointsMaterial({map:texture,size:RAIN_SIZE,
+                transparent:true,opacity:0.8,depthWrite:false,sizeAttenuation:true});
+  rainPts=new THREE.Points(geo,mat);
+  scene.add(rainPts);
+}
+function updateRain(dt){
+  const p=rainPts.geometry.attributes.position;
+  for(let i=0;i<p.count;i++){
+    let y=p.getY(i)-rainVel[i]*dt*ROOM_SIZE;
+    if(y<-ROOM_SIZE*0.25) y=ROOM_SIZE*0.25;
+    p.setY(i,y);
+  }
+  p.needsUpdate=true;
+}
+
+/* ------------ modelos opacos ------------ */
+function prep(root){
+  const env=new THREE.PMREMGenerator(renderer).fromScene(scene,0.04).texture;
+  root.traverse(o=>{
+    if(o.isMesh){
+      o.material=new THREE.MeshStandardMaterial({
+        color:0xffffff,metalness:0.25,roughness:0.2,
+        envMap:env,envMapIntensity:1.6});
+    }
+  });
+}
+
+/* ------------ ajustar modelos ------------ */
+function fit(){
+  if(models.length<2)return;
+  models.forEach(m=>{const box=new THREE.Box3().setFromObject(m);m.position.sub(box.getCenter(new THREE.Vector3()));});
+  const h=new THREE.Box3().setFromObject(models[0]).getSize(new THREE.Vector3()).y;
+  models[1].position.y=-h*1.2;
+}
+
+/* ------------ melt ------------ */
+function melt(){
+  const t=clock.getElapsedTime()*MELT_SPEED;
+  models.forEach(r=>r.traverse(o=>{
+    if(!o.isMesh)return;
+    const g=o.geometry.index?o.geometry.toNonIndexed():o.geometry;
+    if(!g.userData.orig){
+      g.attributes.position.setUsage(THREE.DynamicDrawUsage);
+      g.userData.orig=Float32Array.from(g.attributes.position.array);
+      o.geometry=g;
+    }
+    const p=g.attributes.position,a=g.userData.orig;
+    for(let i=0;i<p.count;i++){
+      const ox=a[3*i],oy=a[3*i+1],oz=a[3*i+2];
+      p.setXYZ(i,ox,oy-(oy+1)*t,oz);
+    }
+    p.needsUpdate=true;
+  }));
+}
+
+/* ------------ color dinámico ------------ */
+function updateColors(dt){
+  const hue=(clock.elapsedTime*HUE_SPEED)%1;
+  camLight.color.setHSL(hue,1,0.6);
+  amb.color.setHSL(hue,0.45,0.45);
+  roomHue=(roomHue+LOOP_CPS_BG*dt)%1;
+  room.material.color.setHSL(roomHue,0.6,0.25);
+}
+
+/* ------------ DJ‑pitch ------------ */
+function pitch(){
+  if(!vin||!src)return;
+  const now=performance.now()/1000,az=controls.getAzimuthalAngle();
+  let d=az-lastAz;if(d>Math.PI)d-=2*Math.PI;if(d<-Math.PI)d+=2*Math.PI;
+  const dt=now-lastT;if(dt<0.016)return;
+  const vel=d/dt; lastAz=az; lastT=now;
+  if( vel>0 && dir==='left'){dir='right';startVin('right');return;}
+  if( vel<0 && dir==='right'){dir='left';startVin('left');return;}
+  const rate=THREE.MathUtils.lerp(AUDIO_MIN,AUDIO_MAX,THREE.MathUtils.clamp(Math.abs(vel)/ANG_FULL,0,1));
+  src.playbackRate.setValueAtTime(rate,ctx.currentTime);
+}
+
+/* ------------ bucle ------------ */
+function animate(){
+  requestAnimationFrame(animate);
+  const dt=clock.getDelta();
+  controls.update();
+  ensureCtx();          // asegura que lluvia de audio inicie
+  updateRain(dt);
+  melt();
+  updateColors(dt);
+  pitch();
+  /* avanzar time uniforme del efecto película para que boucle */
+  filmPass.uniforms.time.value += dt;
+  composer.render();
+}
+</script>
+</body>
+</html>
