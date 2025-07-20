@@ -1,6 +1,22 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
+  <script>
+// Redirige aleatoriamente a otro vX.html al recargar la página (solo una vez por carga)
+if (!sessionStorage.getItem('redirected')) {
+  sessionStorage.setItem('redirected', 'true');
+
+  const variants = ['v1.html', 'v2.html', 'v3.html', 'v4.html', 'v5.html'];
+  const pick = variants[Math.floor(Math.random() * variants.length)];
+
+  if (!location.pathname.endsWith(pick)) {
+    location.href = pick;
+  }
+} else {
+  sessionStorage.removeItem('redirected'); // limpia para siguiente recarga
+}
+</script>
+
 <meta charset="UTF-8">
 <title>Almacabra</title>
 <style>
