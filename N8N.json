@@ -1,0 +1,421 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "url": "https://raw.githubusercontent.com/yavuz/news-feed-list-of-countries/master/active-feeds-auto-generated.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "id": "f2960da1-afa4-4df7-a6b3-2f5620f2ff7e",
+      "name": "Obtener JSON GitHub",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Obtenemos los datos del nodo anterior de forma segura\nconst allData = $input.all();\nlet feedsToProcess = [];\n\n// 2. Lista de países ampliada\nconst countriesOfInterest = [\n  'ESP', 'MEX', 'ARG', 'COL', 'CHL', 'PER', 'BOL', \n  'ECU', 'VEN', 'URY', 'PRY', 'PAN', 'CRI', 'GTM', \n  'HND', 'SLV', 'DOM', 'NIC', 'USA'\n];\n\n// 3. Procesamos cada item que venga del input (por si GitHub viene fragmentado)\nfor (const item of allData) {\n  const rawFeeds = item.json.data || item.json;\n  \n  if (!rawFeeds || typeof rawFeeds !== 'object') continue;\n\n  // 4. Mapeo de los feeds para cada país de la lista\n  for (const country of countriesOfInterest) {\n    if (rawFeeds[country] && Array.isArray(rawFeeds[country])) {\n      rawFeeds[country].forEach(feed => {\n        feedsToProcess.push({\n          json: { // Importante: Envolvemos en 'json' para que n8n lo reconozca como múltiples items\n            country_code: country,\n            publication: feed.publication_name,\n            url: feed.publication_rss_feed_uri\n          }\n        });\n      });\n    }\n  }\n}\n\n// 5. Retornamos la lista completa de items\nreturn feedsToProcess;"
+      },
+      "id": "93ef5776-8a88-4c07-9275-db070d4882c9",
+      "name": "Filtrar Países",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "97c9cb6e-5065-44dc-a720-5553100dc018",
+      "name": "Procesar 1 por 1",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 1,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {}
+      },
+      "id": "ccfe3eb9-fb71-416b-884f-9764e2c1d365",
+      "name": "Leer RSS Actual",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        672,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -208,
+        0
+      ],
+      "id": "674ae8c6-9c1a-43a7-b387-58fad45ddc23",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=={{ `Analiza la siguiente noticia del país: ` + $('Procesar 1 por 1').item.json.country_code + `\n\nTÍTULO: ` + $json.title + `\nCONTENIDO: ` + ($json.contentSnippet || $json.content || \"Contenido no disponible\") + `\n\nTAREA CRÍTICA:\n1. LLENA SIEMPRE el campo 'resumen' con una breve descripción de qué trata la noticia, sin importar el tema.\n2. Identifica el país en el campo 'pais'.\n3. Solo si trata sobre leyes, 5G, espectro, IA o ciberseguridad, marca 'es_regulacion' como true. De lo contrario, marca false.` }}",
+        "hasOutputParser": true,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1120,
+        -16
+      ],
+      "id": "d2bcb390-30ec-4ac0-af24-7fc2b1bd287b",
+      "name": "AI Agent",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"fecha\": {\n      \"type\": \"string\",\n      \"description\": \"Fecha de la noticia (AAAA-MM-DD).\"\n    },\n    \"pais\": {\n      \"type\": \"string\",\n      \"description\": \"País afectado por la regulación.\"\n    },\n    \"organismo\": {\n      \"type\": \"string\",\n      \"description\": \"Nombre del ente regulador (ej. IFT, CNMC, CRC).\"\n    },\n    \"tema\": {\n      \"type\": \"string\",\n      \"enum\": [\n        \"Espectro Radioeléctrico\",\n        \"5G / 6G\",\n        \"Inteligencia Artificial\",\n        \"Ciberseguridad\",\n        \"Protección de Datos\",\n        \"Satélites\",\n        \"Competencia\",\n        \"Infraestructura\"\n      ],\n      \"description\": \"Categoría principal de la noticia.\"\n    },\n    \"resumen\": {\n      \"type\": \"string\",\n      \"description\": \"Resumen técnico de máximo 200 caracteres.\"\n    },\n    \"es_regulacion\": {\n      \"type\": \"boolean\",\n      \"description\": \"True si es sobre leyes/normas TIC, False si es noticia general.\"\n    }\n  },\n  \"required\": [\"pais\", \"tema\", \"resumen\", \"es_regulacion\"]\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1280,
+        224
+      ],
+      "id": "37b8c448-acf8-41a3-bfe0-5811cfb4aeec",
+      "name": "Structured Output Parser",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        864,
+        224
+      ],
+      "id": "55a83876-5e01-48ae-8ccf-2e7311b05eff",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "idqJVA55r9CUv03M",
+          "name": "Google Gemini(PaLM) Api account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "858610e7-3bf1-42dd-8a34-815181b44cf5",
+              "name": "noticia_formateada",
+              "value": "=Pais: {{ $('Procesar 1 por 1').item.json.country_code }}\nTitulo: {{ $('Leer RSS Actual').item.json.title }}\nResumen de la noticia: {{ $json.resumen }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1664,
+        -16
+      ],
+      "id": "00bcbe94-f31f-4e46-892b-e0b4ae3f6fce",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "1596d40c-41be-47a5-aad1-44389cc2ca07",
+              "leftValue": "={{ $json.title }}",
+              "rightValue": "=telecom",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "f193f1dd-3768-4709-8a63-48bb5fc8aaef",
+              "leftValue": "={{ $json.title }}",
+              "rightValue": "regulación",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "f75d8ac9-0db9-4874-86b2-25702def632b",
+              "leftValue": "={{ $json.title }}",
+              "rightValue": "TIC",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "518f2cbf-4a58-4b2d-a8e3-e01874289157",
+              "leftValue": "={{ $json.title }}",
+              "rightValue": "IA",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "1187d7e8-d995-47dc-8b4d-8f4718b7f923",
+              "leftValue": "={{ $json.title }}",
+              "rightValue": "ciberseguridad",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "b10587e7-aa5c-478a-93f0-a6a4c61d9d02",
+              "leftValue": "={{ $json.title }}",
+              "rightValue": "telecomunicaciones",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "7c85c8f3-37b4-470e-9459-3417a6ba9226",
+              "leftValue": "={{ $json.title }}",
+              "rightValue": "redes",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "b68e088e-3251-440a-b4d1-a2631e87fe87",
+              "leftValue": "={{ $json.title }}",
+              "rightValue": "internet",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "01b44e75-d983-4dec-977f-2661367de628",
+              "leftValue": "={{ $json.title }}",
+              "rightValue": "homologacion",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "6e6cdc8a-91ec-4b23-b253-fee929c57a47",
+              "leftValue": "={{ $json.title }}",
+              "rightValue": "firma digital",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        880,
+        0
+      ],
+      "id": "aabdae8e-c020-46cd-89b2-1b5182be6c75",
+      "name": "Filter1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "61541ea9-6916-4009-b6c9-4e60b7531d6a",
+              "leftValue": "={{ $json.es_regulacion }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        1472,
+        -16
+      ],
+      "id": "f8e9e1c4-1cfb-49a7-9cca-7939d17c3bc9",
+      "name": "Filter"
+    }
+  ],
+  "connections": {
+    "Obtener JSON GitHub": {
+      "main": [
+        [
+          {
+            "node": "Filtrar Países",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrar Países": {
+      "main": [
+        [
+          {
+            "node": "Procesar 1 por 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Procesar 1 por 1": {
+      "main": [
+        [
+          {
+            "node": "Leer RSS Actual",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Leer RSS Actual": {
+      "main": [
+        [
+          {
+            "node": "Filter1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Obtener JSON GitHub",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter1": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "2be7cb75cbd350b52d67fba418d5a4a25fbd9efe72338d7313eae80794e5561d"
+  }
+}
